@@ -1,0 +1,21 @@
+{
+  "rutas": {
+    "directorio_base": "./",
+    "carpeta_requerimientos": "data",
+    "carpeta_oc": "data/OC",
+    "carpeta_resultados": "output"
+  },
+  "archivos_fuente": {
+    "recaudo_actual": "RECAUDO.XLSX",
+    "recaudo_anterior": "RECAUDO_ANTERIOR.csv",
+    "Objeto_contrato": "OC.parquet",
+    "runt": "RUNT.parquet",
+    "novedades_sap": "NOV_VAR.parquet",
+    "simulacion_base": "SIMULACION_2025.parquet",
+    "simulacion_comparar": "SIMULACION_2026.parquet"
+  },
+  "parametros_sistema": {
+    "columna_clave": "Placa",
+    "vigencia_por_defecto": 2026
+  }
+}
