@@ -106,8 +106,15 @@ def calcular_variacion_avaluo_dinamico(
     runt: pd.DataFrame,
     vigencia_actual: int,
     mes_evaluar: Optional[int] = None,
+    fecha_inicio: Optional[pd.Timestamp] = None,
+    fecha_fin: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Calcula la variación de avalúo entre vigencias integrando OC y RUNT."""
+    """Calcula la variación de avalúo entre vigencias integrando OC y RUNT.
+
+    Permite filtrar el recaudo actual por mes (comportamiento original) y/o
+    por un rango de días [fecha_inicio, fecha_fin] (ambos inclusive), usando
+    la misma columna de fecha detectada automáticamente.
+    """
     if recaudo_actual is None or recaudo_actual.empty:
         return pd.DataFrame()
 
@@ -117,9 +124,15 @@ def calcular_variacion_avaluo_dinamico(
     runt = _estandarizar_columna_placa(runt)
 
     # --------------------------------------------------------------------------
-    # FILTRADO DE RECAUDO ACTUAL POR MES
+    # FILTRADO DE RECAUDO ACTUAL POR MES Y/O RANGO DE DÍAS
     # --------------------------------------------------------------------------
-    if mes_evaluar is not None and not recaudo_actual.empty:
+    hay_filtro_fecha = (
+        mes_evaluar is not None
+        or fecha_inicio is not None
+        or fecha_fin is not None
+    )
+
+    if hay_filtro_fecha and not recaudo_actual.empty:
         col_fecha = None
         for col in recaudo_actual.columns:
             col_norm = col.strip().lower()
@@ -145,10 +158,28 @@ def calcular_variacion_avaluo_dinamico(
                 )
 
             if not fechas_convertidas.isna().all():
-                recaudo_actual = recaudo_actual[
-                    fechas_convertidas.dt.month == int(mes_evaluar)
-                ].copy()
-            else:
+                # La columna sí se pudo interpretar como fecha real:
+                # aquí se puede aplicar mes y/o rango de días.
+                mascara = pd.Series(True, index=recaudo_actual.index)
+
+                if mes_evaluar is not None:
+                    mascara &= fechas_convertidas.dt.month == int(mes_evaluar)
+
+                if fecha_inicio is not None:
+                    mascara &= fechas_convertidas.dt.normalize() >= pd.Timestamp(
+                        fecha_inicio
+                    )
+
+                if fecha_fin is not None:
+                    mascara &= fechas_convertidas.dt.normalize() <= pd.Timestamp(
+                        fecha_fin
+                    )
+
+                recaudo_actual = recaudo_actual[mascara].copy()
+            elif mes_evaluar is not None:
+                # Fallback original: la columna no es una fecha real (p. ej.
+                # viene como número/texto de mes). El rango de días no aplica
+                # en este caso porque no hay información de día disponible.
                 serie_mes = (
                     recaudo_actual[col_fecha]
                     .astype(str)
@@ -287,8 +318,14 @@ def procesar_qa_liquidaciones(
     anio_sim_comp: int = 2026,
     vigencia_actual: int = 2026,
     mes_evaluar: Optional[int] = None,
+    fecha_inicio: Optional[pd.Timestamp] = None,
+    fecha_fin: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Función principal para el procesamiento consolidado de QA."""
+    """Función principal para el procesamiento consolidado de QA.
+
+    fecha_inicio / fecha_fin: rango de días (ambos inclusive) para filtrar
+    el recaudo actual, adicional/compatible con mes_evaluar.
+    """
     oc_df = Objeto_contrato if Objeto_contrato is not None else orden_compra
 
     datos_consolidados = calcular_variacion_avaluo_dinamico(
@@ -298,6 +335,8 @@ def procesar_qa_liquidaciones(
         runt=runt,
         vigencia_actual=vigencia_actual,
         mes_evaluar=mes_evaluar,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
     )
 
     if datos_consolidados.empty:

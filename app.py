@@ -71,33 +71,75 @@ if st.sidebar.button("🔄 Recargar Estado de Archivos"):
 # ==============================================================================
 # PESTAÑAS PRINCIPALES
 # ==============================================================================
-pestana_qa, pestana_cruce,pestana_recaudo_sim = st.tabs(
-    ["QA Consolidado (Pesados/Local)", "Cruce Independiente","SIM_ACTUAL_PAGOS"]
+pestana_qa, pestana_cruce, pestana_recaudo_sim = st.tabs(
+    ["QA Consolidado (Pesados/Local)", "Cruce Independiente", "SIM_ACTUAL_PAGOS"]
 )
 
 with pestana_qa:
     st.header("1. Parametrización")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         vigencia_evaluar = st.number_input(
             "Vigencia a Auditar:", value=2026, step=1
         )
     with col2:
-        mes_seleccionado = st.selectbox(
-            "Filtrar Mes Recaudo Actual (Opcional):",
-            options=["Todos"] + list(range(1, 13)),
-            index=0,
-        )
-    with col3:
         incluir_simulacion = st.checkbox(
             "Incluir Cruce de Simulaciones en el reporte final", value=True
         )
 
-    # Convertir 'Todos' a None para el procesador
-    mes_evaluar = None if mes_seleccionado == "Todos" else int(mes_seleccionado)
+    # --------------------------------------------------------------------
+    # 2. FILTRO TEMPORAL: primero rango de días, luego mes (fallback).
+    # --------------------------------------------------------------------
+    st.subheader("2. Filtro Temporal del Recaudo Actual (Opcional)")
+    st.caption(
+        "Usa un rango de días para mayor precisión. Si no ingresas fechas, "
+        "puedes usar el filtro de Mes como alternativa rápida."
+    )
 
-    st.subheader("2. Filtrado de Placas (Opcional)")
+    st.markdown("**2.1 Rango de Días**")
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        fecha_inicio_sel = st.date_input(
+            "Fecha inicio:", value=None, key="fecha_inicio_qa"
+        )
+    with col_d2:
+        fecha_fin_sel = st.date_input(
+            "Fecha fin:", value=None, key="fecha_fin_qa"
+        )
+
+    if fecha_inicio_sel and fecha_fin_sel and fecha_inicio_sel > fecha_fin_sel:
+        st.error("⚠️ La fecha de inicio no puede ser posterior a la fecha fin.")
+
+    rango_fechas_activo = bool(fecha_inicio_sel and fecha_fin_sel)
+
+    st.markdown("**2.2 Mes (alternativa si no usas rango de días)**")
+    mes_seleccionado = st.selectbox(
+        "Filtrar Mes Recaudo Actual:",
+        options=["Todos"] + list(range(1, 13)),
+        index=0,
+        disabled=rango_fechas_activo,
+        help=(
+            "Deshabilitado porque hay un rango de días activo en 2.1."
+            if rango_fechas_activo
+            else None
+        ),
+    )
+
+    if rango_fechas_activo:
+        st.info(
+            f"🗓️ Filtro activo: {fecha_inicio_sel} → {fecha_fin_sel}. "
+            "El filtro de Mes está deshabilitado."
+        )
+
+    # Si hay rango de fechas activo, el mes se ignora.
+    mes_evaluar = (
+        None
+        if (mes_seleccionado == "Todos" or rango_fechas_activo)
+        else int(mes_seleccionado)
+    )
+
+    st.subheader("3. Filtrado de Placas (Opcional)")
     col_f1, col_f2 = st.columns(2)
     with col_f1:
         texto_placas = st.text_input("Ingresar placas (separadas por coma):")
@@ -139,7 +181,6 @@ with pestana_qa:
                 archivo_excel=excel_placas,
             )
 
-            # Llamada corregida sin el argumento erróneo
             resultado_qa = procesar_qa_liquidaciones(
                 recaudo_actual=rec_actual_filtrado,
                 recaudo_anterior=rec_anterior,
@@ -152,9 +193,22 @@ with pestana_qa:
                 anio_sim_comp=vigencia_evaluar,
                 vigencia_actual=vigencia_evaluar,
                 mes_evaluar=mes_evaluar,
+                fecha_inicio=fecha_inicio_sel if fecha_inicio_sel else None,
+                fecha_fin=fecha_fin_sel if fecha_fin_sel else None,
             )
 
             st.session_state["resultado_qa"] = resultado_qa
+
+        # Descarga rápida justo después de ejecutar (bytes en Parquet, no el DataFrame crudo)
+        if resultado_qa is not None and not resultado_qa.empty:
+            parquet_bytes_qa = resultado_qa.to_parquet(index=False)
+            st.download_button(
+                label="📦 Descargar Resultado en Parquet",
+                data=parquet_bytes_qa,
+                file_name=f"resultado_qa_{vigencia_evaluar}.parquet",
+                mime="application/octet-stream",
+                key="btn_dl_qa_rapido",
+            )
 
     if "resultado_qa" in st.session_state:
         df_res = st.session_state["resultado_qa"]
@@ -214,18 +268,49 @@ with pestana_qa:
                 len(df_res[df_res["ESTADO_GRUPO_SIM"] == "Misma Tabla"]),
             )
 
-        st.dataframe(df_res, use_container_width=True)
+        st.subheader("Vista Previa (primeras 2,000 filas)")
+        MAX_FILAS_PREVIEW = 2000
+        if len(df_res) > MAX_FILAS_PREVIEW:
+            st.caption(
+                f"⚠️ El resultado tiene {len(df_res):,} filas. "
+                f"Se muestran solo las primeras {MAX_FILAS_PREVIEW:,} para evitar sobrecargar el navegador. "
+                "Usa el botón de descarga para obtener el archivo completo."
+            )
+            st.dataframe(df_res.head(MAX_FILAS_PREVIEW), use_container_width=True)
+        else:
+            st.dataframe(df_res, use_container_width=True)
 
-        output_excel = io.BytesIO()
-        with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
-            df_res.to_excel(writer, index=False, sheet_name="Consolidado_QA")
+        st.markdown("### 📥 Descarga del Resultado Completo")
 
-        st.download_button(
-            label="📥 Descargar Resultado Completo en Excel",
-            data=output_excel.getvalue(),
-            file_name=f"Consolidado_QA_Liquidaciones_{vigencia_evaluar}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        col_dl1, col_dl2 = st.columns(2)
+
+        with col_dl1:
+            parquet_bytes = df_res.to_parquet(index=False)
+            st.download_button(
+                label="Descargar en formato Parquet",
+                data=parquet_bytes,
+                file_name=f"Consolidado_QA_Liquidaciones_{vigencia_evaluar}.parquet",
+                mime="application/octet-stream",
+                key="btn_dl_qa_parquet_full",
+            )
+
+        with col_dl2:
+            generar_excel = st.checkbox(
+                "Generar también en Excel"
+            )
+            if generar_excel:
+                with st.spinner("Generando archivo Excel..."):
+                    output_excel = io.BytesIO()
+                    with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
+                        df_res.to_excel(writer, index=False, sheet_name="Consolidado_QA")
+
+                st.download_button(
+                    label="📥 Descargar Resultado Completo en Excel",
+                    data=output_excel.getvalue(),
+                    file_name=f"Consolidado_QA_Liquidaciones_{vigencia_evaluar}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_dl_qa_excel_full",
+                )
 
 with pestana_cruce:
     st.header("Cruce Independiente desde Disco")
@@ -333,7 +418,7 @@ with pestana_recaudo_sim:
         df_filtrado_rs = df_rs.copy()
 
         m1, m2 = st.columns(2)
-        
+
         if "ESTADO_AVALUO_RECAUDO_VS_SIM" in df_filtrado_rs.columns:
             m1.metric(
                         "Cumplen Criterio",
